@@ -1,51 +1,77 @@
-# Copyright (c) Streamlit Inc. (2018-2022) Snowflake Inc. (2022)
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import streamlit as st
-from streamlit.logger import get_logger
+from video_editor import * 
+from video_editor.v0.config import Config
+from video_editor.v0.utils.audio_utils import *
+from video_editor.v0.utils.video_utils import *
+from datetime import datetime
+import os
 
-LOGGER = get_logger(__name__)
+from video_editor.v0.video_editor import generate_clips, synchronize_transitions_beat, synchronize_transitions_onset
 
+def main():
+    st.title("Video Editor App")
 
-def run():
-    st.set_page_config(
-        page_title="Hello",
-        page_icon="👋",
-    )
+    # Configurations
+    config = Config()
 
-    st.write("# Welcome to Streamlit! 👋")
+    # Testing Mode Toggle
+    testing_mode = st.checkbox("Enable Testing Mode", value=False)
 
-    st.sidebar.success("Select a demo above.")
+    if testing_mode:
+        clips = load_clips(config.processed_clips)
+        process_and_display_videos(clips, config)
+    else:
+        # File Uploader
+        uploaded_files = st.file_uploader("Upload Videos", accept_multiple_files=True, type=['mp4', 'mov'])
 
-    st.markdown(
-        """
-        Streamlit is an open-source app framework built specifically for
-        Machine Learning and Data Science projects.
-        **👈 Select a demo from the sidebar** to see some examples
-        of what Streamlit can do!
-        ### Want to learn more?
-        - Check out [streamlit.io](https://streamlit.io)
-        - Jump into our [documentation](https://docs.streamlit.io)
-        - Ask a question in our [community
-          forums](https://discuss.streamlit.io)
-        ### See more complex demos
-        - Use a neural net to [analyze the Udacity Self-driving Car Image
-          Dataset](https://github.com/streamlit/demo-self-driving)
-        - Explore a [New York City rideshare dataset](https://github.com/streamlit/demo-uber-nyc-pickups)
-    """
-    )
+        if uploaded_files:
+            # Limit the number of files
+            if len(uploaded_files) < 5 or len(uploaded_files) > 20:
+                st.warning("Please upload between 5 to 20 files.")
+                return
 
+            # Save files to a temporary directory
+            temp_dir = "temp_uploaded_files"
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+
+            for uploaded_file in uploaded_files:
+                bytes_data = uploaded_file.read()
+                with open(os.path.join(temp_dir, uploaded_file.name), "wb") as f:
+                    f.write(bytes_data)
+
+            # Generate Clips Button
+            if st.button("Generate Clips"):
+                generate_clips(temp_dir, config.clips_duration, config.processed_clips)
+                clips = load_clips(config.processed_clips)
+                process_and_display_videos(clips, config)
+
+def process_and_display_videos(clips, config):
+    # Sync Options
+    sync_type = st.radio("Select Synchronization Type", ('Beat Sync', 'Offset Sync'))
+
+    # Generate Final Video Button
+    if st.button("Generate Final Video"):
+        if sync_type == 'Beat Sync':
+            random_audio = get_random_audio_file(config.audio_directory)
+            final_video = synchronize_transitions_beat(clips, random_audio, config.audio_start_time, config.final_video_duration, config.minimum_clip_duration)
+        else:
+            random_audio = get_random_audio_file(config.audio_directory)
+            final_video = synchronize_transitions_onset(clips, random_audio, config.audio_start_time, config.final_video_duration)
+
+        filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".mp4"
+        file_path = os.path.join(config.output_directory, filename)
+
+        # Ensure output directory exists
+        if not os.path.exists(config.output_directory):
+            os.makedirs(config.output_directory)
+
+        final_video.write_videofile(file_path, codec=config.codec, audio_codec=config.audio_codec, fps=config.fps, threads=config.threads)
+        st.video(file_path)
+
+        # Provide download link
+        with open(file_path, "rb") as file:
+            st.download_button(label="Download Video", data=file, file_name=filename, mime="video/mp4")
 
 if __name__ == "__main__":
-    run()
+    main()
